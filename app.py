@@ -1,3 +1,5 @@
+import base64
+import json
 import os
 import tempfile
 
@@ -5,9 +7,12 @@ import streamlit as st
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openrouter import ChatOpenRouter
 from openrouter import OpenRouter
+import requests
 
 
 SUMMARY_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+TRANSCRIPTION_MODEL = "openai/whisper-1"
+OPENROUTER_STT_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
 ALLOWED_AUDIO_TYPES = ["wav", "mp3", "m4a"]
 
 
@@ -28,15 +33,30 @@ def build_client(api_key: str) -> OpenRouter:
 
 
 def audio_to_text(client: OpenRouter, audio_path: str) -> str:
+    del client
+    audio_format = os.path.splitext(audio_path)[1].lstrip(".").lower() or "wav"
     with open(audio_path, "rb") as audio_file:
-        transcript = client.stt.create_transcription_multipart(
-            file={
-                "file_name": os.path.basename(audio_path),
-                "content": audio_file,
-            },
-            model="openai/whisper-1",
-        )
-    return transcript.text
+        base64_audio = base64.b64encode(audio_file.read()).decode("utf-8")
+
+    response = requests.post(
+        OPENROUTER_STT_URL,
+        headers={
+            "Authorization": f"Bearer {st.session_state.api_key}",
+            "Content-Type": "application/json",
+        },
+        data=json.dumps(
+            {
+                "model": TRANSCRIPTION_MODEL,
+                "input_audio": {
+                    "data": base64_audio,
+                    "format": audio_format,
+                },
+            }
+        ),
+        timeout=120,
+    )
+    response.raise_for_status()
+    return response.json()["text"]
 
 
 def summarize_meeting(client: OpenRouter, meeting_transcript: str) -> str:
@@ -192,10 +212,11 @@ with st.sidebar:
         type="password",
         placeholder="Enter your OpenRouter API key",
     )
+    st.session_state.api_key = api_key
     st.caption("The key stays hidden in the app and is not hard-coded.")
     st.divider()
     st.write("Model")
-    st.code(SUMMARY_MODEL, language="text")
+    st.code(f"Summary: {SUMMARY_MODEL}\nTranscription: {TRANSCRIPTION_MODEL}", language="text")
 
 st.info("Upload a .wav, .mp3, or .m4a meeting file, then generate a transcript and summary.")
 
@@ -240,8 +261,14 @@ if generate_transcript:
         client = build_client(api_key)
         with st.spinner("Transcribing audio with Whisper..."):
             temp_audio_path = save_uploaded_audio(uploaded_audio)
-            st.session_state.transcript = audio_to_text(client, temp_audio_path)
-        st.success("Transcript generated.")
+            try:
+                st.session_state.transcript = audio_to_text(client, temp_audio_path)
+            except requests.HTTPError as error:
+                response_text = getattr(error.response, "text", "")
+                st.error("Transcription failed. Check your API key, file format, or model access.")
+                st.caption(response_text[:1000] if response_text else str(error))
+            else:
+                st.success("Transcript generated.")
 
 if generate_summary:
     if not api_key:

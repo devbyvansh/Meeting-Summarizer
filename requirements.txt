@@ -1,4 +1,5 @@
 streamlit
+requests
 openrouter
 langchain-core
 langchain-openrouter
