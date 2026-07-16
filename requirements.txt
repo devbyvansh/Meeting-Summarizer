@@ -1,0 +1,4 @@
+streamlit
+openrouter
+langchain-core
+langchain-openrouter
