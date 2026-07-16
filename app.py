@@ -29,9 +29,12 @@ def build_client(api_key: str) -> OpenRouter:
 
 def audio_to_text(client: OpenRouter, audio_path: str) -> str:
     with open(audio_path, "rb") as audio_file:
-        transcript = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=audio_file,
+        transcript = client.stt.create_transcription_multipart(
+            file={
+                "file_name": os.path.basename(audio_path),
+                "content": audio_file,
+            },
+            model="openai/whisper-1",
         )
     return transcript.text
 
